@@ -2,14 +2,79 @@
 # -*- coding: utf-8 -*-
 """
 MERLIN CORE — RESONANCE ENGINE
-Formal Resonance Computing (FRC) v1.0
+Coherence Calculus v1 (successor to FRC v1.0)
+Sealed: 2026-05-17 — Canonical merge of GitHub + zo.space + Drive
 
-Six domains, geometric mean scoring, μ ≥ 0.9995 for PASSED.
-Zero external dependencies.
+Key upgrades from FRC → CC v1:
+- Weighted geometric mean (not simple average)
+- ε = 1e-12 floor for numerical stability
+- D1 weight 0.20, D2 0.15, D3 0.15, D4 0.20, D5 0.15, D6 0.15
+- Binary boolean CH vector (replaces probabilistic Hold/Release)
+- μ threshold remains 0.9995
 """
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
+
+# Domain weights for weighted geometric mean
+DOMAIN_WEIGHTS = {
+    "D1": 0.20,  # Mathematical — highest weight (formal systems core)
+    "D2": 0.15,  # Physical
+    "D3": 0.15,  # Biological
+    "D4": 0.20,  # Cognitive — highest weight (complexity management)
+    "D5": 0.15,  # Social
+    "D6": 0.15,  # Ethical
+}
+EPSILON = 1e-12
+MU_THRESHOLD = 0.9995
+
+# 41-language baseline profiles (from zo.space canonical)
+# Used as priors when real scoring isn't available
+LANGUAGE_BASELINES = {
+    "python":      {"D1": 0.70, "D2": 0.65, "D3": 0.70, "D4": 0.75, "D5": 0.70, "D6": 0.75},
+    "javascript":  {"D1": 0.65, "D2": 0.60, "D3": 0.65, "D4": 0.70, "D5": 0.65, "D6": 0.70},
+    "typescript":  {"D1": 0.70, "D2": 0.65, "D3": 0.70, "D4": 0.75, "D5": 0.70, "D6": 0.75},
+    "rust":        {"D1": 0.80, "D2": 0.75, "D3": 0.80, "D4": 0.85, "D5": 0.80, "D6": 0.85},
+    "go":          {"D1": 0.75, "D2": 0.70, "D3": 0.75, "D4": 0.80, "D5": 0.75, "D6": 0.80},
+    "java":        {"D1": 0.72, "D2": 0.68, "D3": 0.72, "D4": 0.77, "D5": 0.72, "D6": 0.77},
+    "c":           {"D1": 0.78, "D2": 0.73, "D3": 0.78, "D4": 0.83, "D5": 0.78, "D6": 0.83},
+    "cpp":         {"D1": 0.78, "D2": 0.73, "D3": 0.78, "D4": 0.83, "D5": 0.78, "D6": 0.83},
+    "csharp":      {"D1": 0.70, "D2": 0.66, "D3": 0.70, "D4": 0.75, "D5": 0.70, "D6": 0.75},
+    "php":         {"D1": 0.62, "D2": 0.58, "D3": 0.62, "D4": 0.67, "D5": 0.62, "D6": 0.67},
+    "ruby":        {"D1": 0.63, "D2": 0.59, "D3": 0.63, "D4": 0.68, "D5": 0.63, "D6": 0.68},
+    "swift":       {"D1": 0.73, "D2": 0.69, "D3": 0.73, "D4": 0.78, "D5": 0.73, "D6": 0.78},
+    "kotlin":      {"D1": 0.72, "D2": 0.68, "D3": 0.72, "D4": 0.77, "D5": 0.72, "D6": 0.77},
+    "cpp17":       {"D1": 0.78, "D2": 0.73, "D3": 0.78, "D4": 0.83, "D5": 0.78, "D6": 0.83},
+    "haskell":     {"D1": 0.75, "D2": 0.71, "D3": 0.75, "D4": 0.80, "D5": 0.75, "D6": 0.80},
+    "elixir":      {"D1": 0.67, "D2": 0.63, "D3": 0.67, "D4": 0.72, "D5": 0.67, "D6": 0.72},
+    "erlang":      {"D1": 0.66, "D2": 0.62, "D3": 0.66, "D4": 0.71, "D5": 0.66, "D6": 0.71},
+    "clojure":     {"D1": 0.68, "D2": 0.64, "D3": 0.68, "D4": 0.73, "D5": 0.68, "D6": 0.73},
+    "scala":       {"D1": 0.72, "D2": 0.68, "D3": 0.72, "D4": 0.77, "D5": 0.72, "D6": 0.77},
+    "fsharp":      {"D1": 0.69, "D2": 0.65, "D3": 0.69, "D4": 0.74, "D5": 0.69, "D6": 0.74},
+    "lua":         {"D1": 0.60, "D2": 0.56, "D3": 0.60, "D4": 0.65, "D5": 0.60, "D6": 0.65},
+    "r":           {"D1": 0.67, "D2": 0.63, "D3": 0.67, "D4": 0.72, "D5": 0.67, "D6": 0.72},
+    "matlab":      {"D1": 0.66, "D2": 0.62, "D3": 0.66, "D4": 0.71, "D5": 0.66, "D6": 0.71},
+    "julia":       {"D1": 0.71, "D2": 0.67, "D3": 0.71, "D4": 0.76, "D5": 0.71, "D6": 0.76},
+    "perl":        {"D1": 0.58, "D2": 0.54, "D3": 0.58, "D4": 0.63, "D5": 0.58, "D6": 0.63},
+    "powershell":  {"D1": 0.60, "D2": 0.56, "D3": 0.60, "D4": 0.65, "D5": 0.60, "D6": 0.65},
+    "bash":        {"D1": 0.62, "D2": 0.58, "D3": 0.62, "D4": 0.67, "D5": 0.62, "D6": 0.67},
+    "terraform":   {"D1": 0.68, "D2": 0.64, "D3": 0.68, "D4": 0.73, "D5": 0.68, "D6": 0.73},
+    "dockerfile":  {"D1": 0.65, "D2": 0.61, "D3": 0.65, "D4": 0.70, "D5": 0.65, "D6": 0.70},
+    "yaml":        {"D1": 0.60, "D2": 0.56, "D3": 0.60, "D4": 0.65, "D5": 0.60, "D6": 0.65},
+    "json":        {"D1": 0.58, "D2": 0.54, "D3": 0.58, "D4": 0.63, "D5": 0.58, "D6": 0.63},
+    "sql":         {"D1": 0.68, "D2": 0.64, "D3": 0.68, "D4": 0.73, "D5": 0.68, "D6": 0.73},
+    "graphql":     {"D1": 0.67, "D2": 0.63, "D3": 0.67, "D4": 0.72, "D5": 0.67, "D6": 0.72},
+    "html":        {"D1": 0.55, "D2": 0.51, "D3": 0.55, "D4": 0.60, "D5": 0.55, "D6": 0.60},
+    "css":         {"D1": 0.55, "D2": 0.51, "D3": 0.55, "D4": 0.60, "D5": 0.55, "D6": 0.60},
+    "react":       {"D1": 0.72, "D2": 0.68, "D3": 0.72, "D4": 0.77, "D5": 0.72, "D6": 0.77},
+    "vue":         {"D1": 0.70, "D2": 0.66, "D3": 0.70, "D4": 0.75, "D5": 0.70, "D6": 0.75},
+    "svelte":      {"D1": 0.69, "D2": 0.65, "D3": 0.69, "D4": 0.74, "D5": 0.69, "D6": 0.74},
+    "solidity":    {"D1": 0.74, "D2": 0.70, "D3": 0.74, "D4": 0.79, "D5": 0.74, "D6": 0.79},
+    "move":        {"D1": 0.73, "D2": 0.69, "D3": 0.73, "D4": 0.78, "D5": 0.73, "D6": 0.78},
+    "raze":        {"D1": 0.75, "D2": 0.71, "D3": 0.75, "D4": 0.80, "D5": 0.75, "D6": 0.80},
+    "noir":        {"D1": 0.73, "D2": 0.69, "D3": 0.73, "D4": 0.78, "D5": 0.73, "D6": 0.78},
+    "cad":         {"D1": 0.80, "D2": 0.76, "D3": 0.80, "D4": 0.85, "D5": 0.80, "D6": 0.85},
+}
 
 @dataclass
 class FRCProfile:
@@ -47,38 +112,33 @@ class ResonanceEngine:
         return hashlib.sha3_512(data.encode()).hexdigest()
 
     @staticmethod
-    def _gm(values: List[float]) -> float:
-        product = 1.0
-        for v in values:
-            product *= max(v, 1e-10)
-        return product ** (1.0 / len(values))
+    def _wgm(scores: List[float], weights: List[float]) -> float:
+        """Weighted geometric mean — Coherence Calculus v1 core formula.
+        μ = exp( Σᵢ wᵢ × ln(max(sᵢ, ε)) / Σᵢ wᵢ )
+        """
+        total_weight = sum(weights)
+        if total_weight == 0:
+            return 0.0
+        log_sum = sum(w * math.log(max(s, EPSILON)) for w, s in zip(weights, scores))
+        return math.exp(log_sum / total_weight)
 
     def score(self, code: str, language: str = "python") -> FRCProfile:
-        """Compute FRC profile for code in given language."""
+        """Compute Coherence Calculus v1 profile for code in given language.
+        Uses weighted geometric mean across 6 domains with D1/D4 weighted 0.20."""
         tokens = code.split()
         lines = code.strip().split("\n")
         non_empty_lines = [l for l in lines if l.strip()]
         
-        # D1 — Math: numerical density, operator complexity
         d1 = ResonanceEngine._score_d1_math(code, tokens)
-        
-        # D2 — Physical: structural organization, nesting depth
         d2 = ResonanceEngine._score_d2_physical(code, lines, non_empty_lines)
-        
-        # D3 — Biological: interdependence, modularity
         d3 = ResonanceEngine._score_d3_biological(code, tokens)
-        
-        # D4 — Cognitive: complexity management, abstraction
         d4 = ResonanceEngine._score_d4_cognitive(code, lines, tokens)
-        
-        # D5 — Social: communication clarity, naming
         d5 = ResonanceEngine._score_d5_social(code, lines, tokens)
-        
-        # D6 — Ethical: constraint respect, safety
         d6 = ResonanceEngine._score_d6_ethical(code, lines)
         
         domain_scores = [d1, d2, d3, d4, d5, d6]
-        mu = ResonanceEngine._gm(domain_scores)
+        domain_weights = [0.20, 0.15, 0.15, 0.20, 0.15, 0.15]
+        mu = ResonanceEngine._wgm(domain_scores, domain_weights)
         passed = mu >= self.threshold
         
         profile_data = f"{d1:.6f}{d2:.6f}{d3:.6f}{d4:.6f}{d5:.6f}{d6:.6f}{mu:.6f}"
